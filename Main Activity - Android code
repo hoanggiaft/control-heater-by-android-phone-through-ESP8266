@@ -1,0 +1,267 @@
+package com.example.heatercontroller4;
+
+import android.os.CountDownTimer;
+import android.support.v7.app.AppCompatActivity;
+import android.os.Bundle;
+import android.util.Log;
+import android.util.TypedValue;
+import android.view.View;
+import android.widget.Button;
+import android.widget.SeekBar;
+import android.widget.TextView;
+
+import java.util.concurrent.ExecutionException;
+
+public class MainActivity extends AppCompatActivity {
+
+    NetworkSniffTask nst;
+    ConnectTask ct;
+    String strIP = "";
+
+    int minTem=5;
+    int maxTemp=35;
+    public TextView tvTime;
+    TextView tvMode;
+    TextView tvTemperature;
+
+    int receivingTemp = 0;
+    SeekBar seekBar;
+    int newTemp = 30;
+    int countTime = 0;
+    String strOldMode="";
+    String strReceivingMode="";
+    Button btIncrease;
+    Button btDecrease;
+    Button btShutdown;
+    Button btNormal;
+    Button btSleep;
+    Button btWakeup;
+    Button btPower;
+    Button btReset;
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+
+        tvTime = findViewById(R.id.tvTime);
+        tvMode = findViewById(R.id.tvMode);
+        tvTemperature = findViewById(R.id.tvTemperature);
+        seekBar = findViewById(R.id.sbAdjustTemp);
+
+        btDecrease = findViewById(R.id.btDescrease);
+        btIncrease = findViewById(R.id.btIncrease);
+        btShutdown = findViewById(R.id.btShutDown);
+        btNormal = findViewById(R.id.btSetNormalTemp);
+        btSleep = findViewById(R.id.btSleepingTemp);
+        btWakeup = findViewById(R.id.btSetWakeUpTemp);
+        btPower =findViewById(R.id.btPower2);
+        btReset = findViewById(R.id.btResetDevice);
+
+
+        nst = new NetworkSniffTask(getApplicationContext());
+        try {
+            strIP = nst.execute().get();
+
+        } catch (ExecutionException e) {
+            e.printStackTrace();
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+
+        ct = new ConnectTask();
+        ct.mTcpClient.SERVER_IP = strIP;
+        ct.execute();
+
+
+        new CountDownTimer(300000, 1000) {
+
+            public void onTick(long millisUntilFinished) {
+                String strReceivedMessage = ct.strReceivedMessage;
+                Log.e("ABC", ct.getStatus() + " message: " + strReceivedMessage);
+                try {
+                    String[] arrValue = strReceivedMessage.split("#");
+                    tvTime.setText("Time: " + arrValue[1]);
+
+                    receivingTemp = Integer.parseInt(arrValue[2]);
+                    strReceivingMode ="Mode: " + arrValue[3];
+
+
+
+                    if(!strOldMode.equals(strReceivingMode))
+                    {
+                        tvMode.setText(strReceivingMode);
+                        tvMode.setTextSize(TypedValue.COMPLEX_UNIT_SP, 30);
+                        strOldMode = strReceivingMode;
+                        if(strReceivingMode.indexOf("OFF")>0)
+                            disableButtons(true,true);
+                        else
+                            disableButtons(false,true);
+                    }
+                    if (receivingTemp != newTemp) {
+                        seekBar.setProgress(receivingTemp - 5);
+                        tvTemperature.setTextSize(TypedValue.COMPLEX_UNIT_SP, 30);
+                        tvTemperature.setText("Set: " + arrValue[2] + " °C");
+                        newTemp=receivingTemp;
+                        Log.e("ABC", "changing Temp");
+                        if(strReceivingMode.indexOf("OFF")>0)
+                            disableButtons(true,true);
+                        else
+                            disableButtons(false,true);
+                    }
+                } catch (Exception ex) {
+
+                }
+            }
+
+            public void onFinish() {
+                //mTextField.setText("done!");
+            }
+        }.start();
+
+
+        //ct.mTcpClient.sendMessage("increaseTemp\r");
+
+        seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            int progressChangedValue = 0;
+
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                countTime = 0;
+                progressChangedValue = progress;
+                newTemp = 5 + progressChangedValue;
+
+                disableButtons(true,false);
+                seekBar.setEnabled(true);
+                Log.e("ABC", "new temp at progress changed: " + newTemp);
+            }
+
+            public void onStartTrackingTouch(SeekBar seekBar) {
+                // TODO Auto-generated method stub
+
+            }
+
+            public void onStopTrackingTouch(SeekBar seekBar) {
+
+
+                seekBar.setProgress(newTemp - 5);
+                Log.e("ABC", "new temp at Stop Tracking: " + newTemp);
+                String xx =Integer.toString(newTemp);
+                if (ct.mTcpClient != null) {
+                    if(xx.length()==1)
+                        xx = "0"+xx;
+                    ct.mTcpClient.sendMessage("and"+xx+"DROIDnewTemp\r");
+                    disableButtons(false,true);
+                }
+
+            }
+        });
+    }
+
+    public void increase(View v) {
+        if (ct.mTcpClient != null) {
+
+            if(maxTemp==receivingTemp)
+                return;
+            ct.mTcpClient.sendMessage("andDROIDincrease\r");
+            nofifySettingNewTemp();
+        }
+
+
+    }
+
+    public void decrease(View v) {
+        if (ct.mTcpClient != null) {
+            if(minTem==receivingTemp)
+                return;
+            nofifySettingNewTemp();
+            ct.mTcpClient.sendMessage("andDROIDdecrease\r");
+        }
+    }
+
+    public void powerButtonPressed(View v) {
+        if (ct.mTcpClient != null) {
+            if(tvMode.getText().toString().indexOf("Energy")>0)
+                disableButtons(true,false);
+            else
+                disableButtons(false,false);
+            notifySettingMode();
+            ct.mTcpClient.sendMessage("andDROIDpower\r");
+        }
+    }
+    public void resetHeater(View v)
+    {
+        if (ct.mTcpClient != null) {
+            ct.mTcpClient.sendMessage("andDROIDreset\r");
+        }
+    }
+
+    public void setNormalTemp(View v) {
+        if (ct.mTcpClient != null) {
+            nofifySettingNewTemp();
+            ct.mTcpClient.sendMessage("andDROIDnormal\r");
+        }
+    }
+
+    public void setWakeUpTemp(View v) {
+        if (ct.mTcpClient != null) {
+            nofifySettingNewTemp();
+            ct.mTcpClient.sendMessage("andDROIDwakeup\r");
+        }
+    }
+
+    public void setSleepingTemp(View v) {
+        if (ct.mTcpClient != null) {
+            nofifySettingNewTemp();
+            ct.mTcpClient.sendMessage("andDROIDsleep\r");
+        }
+    }
+
+
+    public void shutdownPressed(View v) {
+
+        disableButtons(true,false);
+        if (ct.mTcpClient != null) {
+            ct.mTcpClient.sendMessage("andDROIDshutdown\r");
+        }
+    }
+
+    public void nofifySettingNewTemp()
+    {
+        disableButtons(true,false);
+        tvTemperature.setText("Setting new temperture!");
+        tvTemperature.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
+    }
+    public  void notifySettingMode()
+    {
+        disableButtons(true,false);
+        tvMode.setText("Setting new mode!");
+        tvMode.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
+    }
+    public void disableButtons(boolean isDisabled, boolean isEnabledPowerBt)
+    {
+     if(!   isDisabled)
+     {
+         btDecrease.setEnabled(true);
+         btIncrease.setEnabled(true);
+         btShutdown.setEnabled(true);
+         btNormal.setEnabled(true);
+         btSleep.setEnabled(true);
+         btWakeup.setEnabled(true);
+         btReset.setEnabled(true);
+         seekBar.setEnabled(true);
+     }
+     else
+     {
+         btDecrease.setEnabled(false);
+         btIncrease.setEnabled(false);
+         btShutdown.setEnabled(false);
+         btNormal.setEnabled(false);
+         btSleep.setEnabled(false);
+         btWakeup.setEnabled(false);
+         btReset.setEnabled(false);
+         seekBar.setEnabled(false);
+     }
+     btPower.setEnabled(isEnabledPowerBt);
+     //seekBar.setEnabled(isEnabledSeekBar);
+    }
+}
