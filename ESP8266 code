@@ -1,0 +1,61 @@
+#include <ESP8266WiFi.h>
+#include <SoftwareSerial.h>
+
+#ifndef STASSID
+#define STASSID "TELUS6080"
+#define STAPSK  "nissan2010"
+#endif
+
+const char* ssid     = STASSID;
+const char* password = STAPSK;
+
+WiFiServer server(80);
+String strIP = "";
+
+void setup() {
+
+  Serial.begin(115200);
+  Serial.println("Esp Serial da san sang");
+  Serial.print("Connecting to ");
+  Serial.println(ssid);
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  server.begin();
+  Serial.println("WiFi connected!!!");
+  Serial.println("IP address: ");
+  strIP = WiFi.localIP().toString();
+  Serial.println(strIP);
+}
+
+String line = " line ban dau cua esp8266";
+void loop() {
+  // listen for incoming clients
+  WiFiClient client = server.available();
+  while (client.connected())
+  {
+    if (client.available())
+    {
+      String str2 =client.readStringUntil('\r');
+      if(str2!=NULL)
+        Serial.println(str2);
+    }
+    if (Serial.available())
+    {
+      String str = Serial.readStringUntil('\r');
+      if (str!=NULL)    
+      {
+        Serial.println(str);
+        client.println(str);
+      }
+      delay(100);
+    }
+  }
+
+
+
+}
