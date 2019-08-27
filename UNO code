@@ -1,0 +1,332 @@
+#include <Wire.h>
+#include <SoftwareSerial.h>
+#include "RTClib.h"
+#include  <SPI.h>
+#include <WiFi.h>
+#include <ESP8266_Lib.h>
+#include <BlynkSimpleShieldEsp8266.h>
+
+RTC_DS3231 rtc;
+int IN1 = 8; //increase
+int IN2 = 9; //decrease
+int IN3 = 10; //power
+int IN4 = 11;
+int D_power = 3; //power button (button of heater)
+int D_shutdown = 4;
+int D_increase = 5;
+int D_decrease = 6;
+
+int interval_press = 100;
+int min_temp_of_heater = 5; //°C
+int max_temp_of_heater = 35;
+
+int setTemp = 0;
+int tempToAdjust = min_temp_of_heater;
+int wake_up_temp = 33;
+int normal_temp = 27;
+int sleeping_temp = 20;
+int k1 = 35 - wake_up_temp;
+int k2 = 35 - normal_temp;
+int k3 = 35 - sleeping_temp;
+int mode_by_power_button = 0;
+int number_of_mode = 4; //0 - High, 1 - Low, 2 - Fan, 3 - Save, 4 - OFF
+
+int wake_up_hour = 5;
+int wake_up_minute = 30;
+int wake_up_second = 0;
+
+int normal_return_hour = 7;
+int normal_return_minute = 0;
+int normal_return_second = 0;
+
+int sleep_hour = 9;
+int sleep_minute = 0;
+int sleep_second = 0;
+int baud_rate = 115200;
+
+void setup() {
+  Serial.begin(115200);
+  Serial.println("Heater Controller is ready!!!");
+
+  pinMode(IN1, INPUT);
+  pinMode(IN2, INPUT);
+  pinMode(IN3, INPUT);
+  pinMode(IN4, INPUT);
+  pinMode(D_power, OUTPUT);
+
+  setTemp = max_temp_of_heater;
+  mode_by_power_button = 0; //High mode
+
+  rtc.begin();
+  //set January 27 2017 at 12:56 you would call:
+  //rtc.adjust(DateTime(2019, 8, 24, 20, 00, 20));
+  // The following lines can be uncommented to set the date and time
+}
+String strTime = "";
+String strMode = "";
+String strSending = "Arduino sent to android via ESP!";
+String strReceiving = "";
+String strReceivingTemp = "";
+void loop() {
+  if (mode_by_power_button == 0)
+  {
+    strMode = "High";
+  }
+  else if (mode_by_power_button == 1)
+  {
+    strMode = "Low";
+  }
+  else if (mode_by_power_button == 2)
+  {
+    strMode = "Fan";
+  }
+  else if (mode_by_power_button == 3)
+  {
+    strMode = "Energy";
+  }
+  else if (mode_by_power_button == 4)
+  {
+    strMode = "OFF";
+  }
+  DateTime now = rtc.now();
+  strTime = String(now.hour()) + ":" + String(now.minute()) + ":" + String(now.second());
+
+  //at 5:30AM increase temp to wake-up temp
+  if (now.hour() == wake_up_hour && now.minute() == wake_up_minute && now.second() == wake_up_second)
+  {
+    set_Wake_up_Temp();
+  }
+  if (now.hour() == sleep_hour && now.minute() == sleep_minute )
+  {
+    if ( now.second() == sleep_second || now.second() == sleep_second + 1 || now.second() == sleep_second + 2)
+      set_SleepTemp();
+  }
+
+  //at 9:00PM return to normal temp
+  if (now.hour() == normal_return_hour && now.minute() == normal_return_minute)
+  {
+    if (now.second() == normal_return_second || now.second() == normal_return_second + 1 || now.second() == normal_return_second + 2)
+      set_NormalTemp();
+  }
+  strSending = "UNO#" + strTime + "#" + String(setTemp) + "#" + strMode + "#\r";
+  strReceiving = Serial.readStringUntil("\r");
+  if (strReceiving.indexOf("DROID") > 0)
+  {
+    //Receiving data
+    if (strReceiving.indexOf("DROIDincrease") > 0)
+      increaseTemp(1, false);
+    if (strReceiving.indexOf("DROIDdecrease") > 0)
+      decreaseTemp(1);
+    if (strReceiving.indexOf("DROIDwakeup") > 0)
+      set_Wake_up_Temp();
+    if (strReceiving.indexOf("DROIDnormal") > 0)
+      set_NormalTemp();
+    if (strReceiving.indexOf("DROIDsleep") > 0)
+      set_SleepTemp();
+    if (strReceiving.indexOf("DROIDreset") > 0)
+      resetHeater();
+
+    if (strReceiving.indexOf("DROIDnewTemp") > 0)
+    {
+      strReceivingTemp = strReceiving;
+      int index = strReceivingTemp.indexOf("DROIDnewTemp");
+      //Serial.println(" receieving: " + strReceivingTemp);
+      char x1 = strReceivingTemp[index - 2];
+      char x2 = strReceivingTemp[index - 1];
+      String x = String(x1) + String(x2);
+      int newTemp = x.toInt();
+      //Serial.println(" x1 " + String(x1) + " x2 " + (x2) + " x " + String(x) + " newTemp " + newTemp);
+      adjustTemperature(newTemp);
+    }
+    if (strReceiving.indexOf("DROIDpower") > 0 )
+    {
+      powerPressed(false);
+    }
+    if (strReceiving.indexOf("DROIDshutdown") > 0)
+    {
+      shutdownFunction();
+    }
+  }
+  else
+  {
+    //Not receiving, so sending
+    Serial.println(strSending);
+  }
+  //This will repeat in app
+  // Serial.println(strReceiving);
+  if (digitalRead(D_power) == HIGH)
+  {
+    powerPressed(true);
+  }
+  if (digitalRead(D_shutdown) == HIGH)
+  {
+    shutdownFunction();
+  }
+  if (digitalRead(D_increase) == HIGH)
+  {
+    increaseTemp(1, true);
+  }
+  delay(100);
+}
+
+void shutdownFunction()
+{
+  if (mode_by_power_button == 0)
+  {
+    pressButton(IN3, 4);
+  }
+  if (mode_by_power_button == 1)
+  {
+    pressButton(IN3, 3);
+  }
+  if (mode_by_power_button == 2)
+  {
+    pressButton(IN3, 2);
+  }
+  if (mode_by_power_button == 3)
+  {
+    pressButton(IN3, 1);
+  }
+  mode_by_power_button = 4;
+}
+void powerPressed(boolean isPhysicalPowerPressed)
+{
+  //Serial.println("------------------------------------");
+  Serial.println("pressed Power Button!");
+  //Serial.println("------------------------------------");
+  if (isPhysicalPowerPressed == false)
+    pressButton(IN3, 1); //one more time
+  mode_by_power_button++;
+  if (mode_by_power_button == number_of_mode + 1)
+  {
+    mode_by_power_button = 0;
+  }
+}
+
+
+void adjustTemperature(int newTemp)
+{
+  if (newTemp >= min_temp_of_heater && newTemp <= max_temp_of_heater)
+  {
+    int k = newTemp - setTemp ;
+    if (k > 0)
+    {
+      increaseTemp(k, false);
+    }
+    else
+    {
+      k = -k;
+      decreaseTemp( k);
+    }
+    setTemp = newTemp;
+  }
+}
+void set_Wake_up_Temp()
+{
+  //Serial.println("------------------------------------");
+  //Serial.println("Setting wake-up temperature ...");
+  //Serial.println("------------------------------------");
+  adjustTemperature(wake_up_temp);
+}
+void set_NormalTemp()
+{
+  //Serial.println("------------------------------------");
+  //Serial.println("Setting normal temperature ...");
+  //Serial.println("------------------------------------");
+  adjustTemperature(normal_temp);
+}
+void set_SleepTemp()
+{
+  //Serial.println("------------------------------------");
+  //Serial.println("Setting sleeping temperature ...");
+  //Serial.println("------------------------------------");
+  adjustTemperature(sleeping_temp);
+}
+void resetHeater()
+{
+  
+    pinMode(IN1, OUTPUT);
+    delay(6000);
+    pinMode(IN1, INPUT);
+    delay(50);   
+ 
+  set_SleepTemp();
+   pinMode(IN1, OUTPUT);
+    delay(100);
+    pinMode(IN1, INPUT);
+    delay(100);   
+}
+void increaseTemp(int count, boolean isPhysicalButton)
+{
+  if (setTemp == max_temp_of_heater)
+  {
+    Serial.println("Cannot increase temperature!!!");
+    return;
+  }
+  if (isPhysicalButton)
+  {
+    setTemp = setTemp + 1;
+  }
+  else
+  {
+    pinMode(IN1, OUTPUT);
+    delay(interval_press);
+    pinMode(IN1, INPUT);
+    delay(interval_press);
+
+    int tempDisplay = setTemp;
+    for (int i = 0; i < count; i++)
+    {
+      tempDisplay = tempDisplay + 1;
+      //Serial.println("Increasing Temperature ...");
+      //Serial.print("Set Temperature: ");
+      //Serial.print(tempDisplay);
+      //Serial.print("°C\n");
+      pinMode(IN1, OUTPUT);
+      delay(interval_press);
+      pinMode(IN1, INPUT);
+      delay(interval_press);
+    }
+    setTemp = tempDisplay;
+  }
+
+}
+void decreaseTemp(int count)
+{
+  if (setTemp == min_temp_of_heater)
+  {
+    Serial.println("Cannot decrease temperature!!!");
+    return;
+  }
+  int tempDisplay = setTemp;
+
+  pinMode(IN2, OUTPUT);
+  delay(interval_press);
+  pinMode(IN2, INPUT);
+  delay(interval_press);
+  for (int i = 0; i < count; i++)
+  {
+    tempDisplay = tempDisplay - 1;
+    //Serial.println("Decreasing Temperature ...");
+    //Serial.print("Set Temperature: ");
+    //Serial.print(tempDisplay);
+    //Serial.print("°C\n");
+    pinMode(IN2, OUTPUT);
+    delay(interval_press);
+    pinMode(IN2, INPUT);
+    delay(interval_press);
+  }
+  setTemp = tempDisplay;
+}
+
+void pressButton(int INx, int count)
+{
+    
+  for (int i = 0; i < count; i++)
+  {
+    pinMode(INx, OUTPUT);
+    delay(interval_press);
+    pinMode(INx, INPUT);
+    delay(interval_press);
+  }
+}
